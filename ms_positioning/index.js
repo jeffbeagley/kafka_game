@@ -14,22 +14,26 @@ const schm = {
 			name: 'name',
 			type: 'string'
 		}, {
-			name: 'pos',
+			name: 'position',
 			type: {
 				type: "array",
-				items: "int"
-
+				items: "double"
 			}
+		}, {
+			name: 'previous_position',
+			type: {
+				type: "array",
+				items: "double"
+			}
+		}, {
+			name: 'speed',
+			type: 'double'
 
 		}
 	]
 }
 
 let k = new kafka.producer('positioning', 1024, 0, schm)
-
-//     k.sendEvent({"name": "jeff"})
-//     k.sendEvent({"name": "ruth"})
-//     k.sendEvent({"name": "joah"})
 
 io.on('connection', (client) => {
 	client.on('event', (data) => {
@@ -47,7 +51,9 @@ io.on('connection', (client) => {
 		console.log(data);
 		let m = {
 			name: data.name,
-			pos: [data.pos[0], data.pos[1], data.pos[2], data.pos[3]]
+			position: data.position,
+			previous_position: data.previous_position,
+			speed: data.speed
 		}
 
 		k.sendEvent(m)
