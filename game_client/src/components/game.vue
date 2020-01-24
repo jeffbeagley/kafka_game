@@ -1,5 +1,39 @@
 <template>
-	<div id="game"></div>
+	<v-app id="game_container">
+		<div id="game">
+			<v-dialog v-model="dialog" hide-overlay persistent width="300">
+				<v-card color="primary" dark>
+					<v-card-text>
+						{{ loading_message }}
+						<v-progress-linear indeterminate color="white" class="mb-0"></v-progress-linear>
+					</v-card-text>
+				</v-card>
+			</v-dialog>
+
+			<v-dialog v-model="name_form" persistent max-width="600px">
+				<v-card>
+					<v-card-title>
+						<span class="headline">User Profile</span>
+					</v-card-title>
+					<v-card-text>
+						<v-container>
+							<v-row>
+								<v-col cols="12" sm="6" md="4">
+									<v-text-field label="Name*" required v-model="name"></v-text-field>
+								</v-col>
+							</v-row>
+						</v-container>
+						<small>*indicates required field</small>
+					</v-card-text>
+					<v-card-actions>
+						<v-spacer></v-spacer>
+						<v-btn color="blue darken-1" text @click="name_form = false">Cancel</v-btn>
+						<v-btn color="blue darken-1" text @click="getPlayerName">Explore!</v-btn>
+					</v-card-actions>
+				</v-card>
+			</v-dialog>
+		</div>
+	</v-app>
 </template>
 
 <script>
@@ -7,17 +41,25 @@ import Phaser from 'phaser';
 import mapJSON from '../assets/map/map';
 import io from 'socket.io-client';
 
-// eslint-disable-next-line no-unused-vars
-
 export default {
 	name: 'game',
 	data() {
 		return {
 			name: null,
-			socket: null
+			socket: null,
+			dialog: true,
+			name_form: false,
+			loading_message: 'Awaiting Server Connection...'
 		};
 	},
 	methods: {
+		getPlayerName() {
+			let game = this;
+
+			this.name_form = false;
+
+			game.createGame();
+		},
 		preloadWorld() {
 			let preloadScene = new Phaser.Scene('preloadScene');
 
@@ -186,7 +228,7 @@ export default {
 
 				if (player_moved) {
 					game.socket.emit('user move', {
-						name: 'jeff',
+						name: game.name,
 						position: [this.player.body.position.x, this.player.body.position.y],
 						previous_position: [this.player.body.prev.x, this.player.body.prev.y],
 						speed: this.player.body.speed
@@ -197,7 +239,7 @@ export default {
 			return worldScene;
 		},
 		createGame() {
-			let self = this;
+			let game = this;
 
 			let config = {
 				type: Phaser.AUTO,
@@ -215,16 +257,24 @@ export default {
 						debug: true // set to true to view zones
 					}
 				},
-				scene: [self.preloadWorld(this, self), self.createWorld(this, self)]
+				scene: [game.preloadWorld(this, game), game.createWorld(this, game)]
 			};
 
 			new Phaser.Game(config);
 
-			self.socket = io('http://localhost:3000', {});
+			game.dialog = false;
 		}
 	},
 	mounted() {
-		this.createGame();
+		let game = this;
+
+		game.socket = io('http://localhost:3000', {});
+
+		game.socket.on('connect', function() {
+			game.loading_message = 'Loading World...';
+
+			game.name_form = true;
+		});
 	}
 };
 </script>
