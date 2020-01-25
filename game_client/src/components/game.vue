@@ -118,9 +118,11 @@ export default {
 						right: this.input.keyboard.addKey('D')
 					};
 
+					// create enemies
+					//this.createEnemies();
+
 					// listen for web socket events
 					game.socket.on('currentPlayers', function(players) {
-						console.log('currentPlayers event');
 						Object.keys(players).forEach(function(id) {
 							if (players[id].playerId === game.socket.id) {
 								ws.createPlayer(players[id]);
@@ -238,6 +240,7 @@ export default {
 				this.physics.add.overlap(this.weapon, this.spawns, this.onMeetEnemy, false, this);
 				this.physics.add.collider(this.container, this.spawns);
 				this.physics.add.collider(this.container, this.obstacles);
+				this.physics.add.collider(this.container, this.otherPlayers);
 			};
 
 			worldScene.addOtherPlayers = function(playerInfo) {
@@ -245,6 +248,8 @@ export default {
 				otherPlayer.setTint(Math.random() * 0xffffff);
 				otherPlayer.playerId = playerInfo.playerId;
 				this.otherPlayers.add(otherPlayer);
+				otherPlayer.body.setCollideWorldBounds(true);
+				otherPlayer.body.setImmovable();
 			};
 
 			worldScene.updateCamera = function() {
@@ -304,7 +309,7 @@ export default {
 				}, 500);
 			};
 
-			worldScene.getEnemySpite = function() {
+			worldScene.getEnemySprite = function() {
 				var sprites = ['golem', 'ent', 'demon', 'worm', 'wolf'];
 				return sprites[Math.floor(Math.random() * sprites.length)];
 			};
