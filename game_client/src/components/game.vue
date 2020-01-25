@@ -45,7 +45,7 @@ export default {
 	name: 'game',
 	data() {
 		return {
-			name: null,
+			name: 'jeff',
 			socket: null,
 			dialog: true,
 			name_form: false,
@@ -73,6 +73,13 @@ export default {
 					frameWidth: 16,
 					frameHeight: 16
 				});
+
+				this.load.image('golem', 'img/coppergolem.png');
+				this.load.image('ent', 'img/dark-ent.png');
+				this.load.image('demon', 'img/demon.png');
+				this.load.image('worm', 'img/giant-worm.png');
+				this.load.image('wolf', 'img/wolf.png');
+				this.load.image('sword', 'img/attack-icon.png');
 			};
 
 			preloadScene.create = function() {
@@ -83,25 +90,91 @@ export default {
 		},
 		createWorld() {
 			let game = this;
+
 			let worldScene = new Phaser.Scene('worldScene');
 
 			worldScene.create = function() {
+				game.socket = io('http://localhost:3000', {});
+
+				game.socket.on('connect', () => {
+					game.socket.emit('userJoin');
+
+					let ws = this;
+
+					this.otherPlayers = this.physics.add.group();
+
+					// create map
+					this.createMap();
+
+					// create player animations
+					this.createAnimations();
+
+					// user input
+					this.cursors = this.input.keyboard.createCursorKeys();
+					this.wasd = {
+						up: this.input.keyboard.addKey('W'),
+						down: this.input.keyboard.addKey('S'),
+						left: this.input.keyboard.addKey('A'),
+						right: this.input.keyboard.addKey('D')
+					};
+
+					// listen for web socket events
+					game.socket.on('currentPlayers', function(players) {
+						console.log('currentPlayers event');
+						Object.keys(players).forEach(function(id) {
+							if (players[id].playerId === game.socket.id) {
+								ws.createPlayer(players[id]);
+							} else {
+								ws.addOtherPlayers(players[id]);
+							}
+						});
+					});
+
+					game.socket.on('newPlayer', function(playerInfo) {
+						ws.addOtherPlayers(playerInfo);
+					});
+
+					game.socket.on('disconnect', function(playerId) {
+						ws.otherPlayers.getChildren().forEach(function(player) {
+							if (playerId === player.playerId) {
+								player.destroy();
+							}
+						});
+					});
+
+					game.socket.on('playerMoved', function(playerInfo) {
+						ws.otherPlayers.getChildren().forEach(function(player) {
+							if (playerInfo.name === player.playerId) {
+								player.flipX = playerInfo.flipX;
+								player.setPosition(playerInfo.position[0], playerInfo.position[1]);
+							}
+						});
+					});
+				});
+			};
+
+			worldScene.createMap = function() {
 				// create the map
-				var map = this.make.tilemap({
+				this.map = this.make.tilemap({
 					key: 'map'
 				});
 
 				// first parameter is the name of the tilemap in tiled
-				var tiles = map.addTilesetImage('spritesheet', 'tiles', 16, 16, 1, 2);
+				var tiles = this.map.addTilesetImage('spritesheet', 'tiles', 16, 16, 1, 2);
 
 				// creating the layers
-				map.createStaticLayer('Grass', tiles, 0, 0);
-				var obstacles = map.createStaticLayer('Obstacles', tiles, 0, 0);
+				this.map.createStaticLayer('Grass', tiles, 0, 0);
+				this.obstacles = this.map.createStaticLayer('Obstacles', tiles, 0, 0);
 
 				// make all tiles in obstacles collidable
-				obstacles.setCollisionByExclusion([-1]);
+				this.obstacles.setCollisionByExclusion([-1]);
 
-				//  animation with key 'left', we don't need left and right as we will use one and flip the sprite
+				// don't go out of the map
+				this.physics.world.bounds.width = this.map.widthInPixels;
+				this.physics.world.bounds.height = this.map.heightInPixels;
+			};
+
+			worldScene.createAnimations = function() {
 				this.anims.create({
 					key: 'left',
 					frames: this.anims.generateFrameNumbers('player', {
@@ -136,103 +209,207 @@ export default {
 					frameRate: 10,
 					repeat: -1
 				});
-
-				// our player sprite created through the phycis system
-				this.player = this.physics.add.sprite(50, 100, 'player', 6);
-
-				// don't go out of the map
-				this.physics.world.bounds.width = map.widthInPixels;
-				this.physics.world.bounds.height = map.heightInPixels;
-				this.player.setCollideWorldBounds(true);
-
-				// don't walk on trees
-				this.physics.add.collider(this.player, obstacles);
-
-				// limit camera to map
-				this.cameras.main.setBounds(0, 0, map.widthInPixels, map.heightInPixels);
-				this.cameras.main.startFollow(this.player);
-				this.cameras.main.roundPixels = true; // avoid tile bleed
-
-				// user input
-				// TODO allow user to select which keyboard controls to use
-				this.cursors = this.input.keyboard.createCursorKeys();
-				this.wasd = {
-					up: this.input.keyboard.addKey('W'),
-					down: this.input.keyboard.addKey('S'),
-					left: this.input.keyboard.addKey('A'),
-					right: this.input.keyboard.addKey('D')
-				};
-
-				// where the enemies will be
-				this.spawns = this.physics.add.group({
-					classType: Phaser.GameObjects.Zone
-				});
-				for (var i = 0; i < 30; i++) {
-					var x = Phaser.Math.RND.between(0, this.physics.world.bounds.width);
-					var y = Phaser.Math.RND.between(0, this.physics.world.bounds.height);
-					// parameters are x, y, width, height
-					this.spawns.create(x, y, 20, 20);
-				}
-				// add collider
-				this.physics.add.overlap(this.player, this.spawns, this.onMeetEnemy, false, this);
 			};
 
-			worldScene.onMeetEnemy = function(player, zone) {
-				// we move the zone to some other location
-				zone.x = Phaser.Math.RND.between(0, this.physics.world.bounds.width);
-				zone.y = Phaser.Math.RND.between(0, this.physics.world.bounds.height);
+			worldScene.createPlayer = function(playerInfo) {
+				// our player sprite created through the physics system
+				this.player = this.add.sprite(0, 0, 'player', 6);
+
+				this.container = this.add.container(playerInfo.x, playerInfo.y);
+				this.container.setSize(16, 16);
+				this.physics.world.enable(this.container);
+				this.container.add(this.player);
+
+				// add weapon
+				this.weapon = this.add.sprite(10, 0, 'sword');
+				this.weapon.setScale(0.5);
+				this.weapon.setSize(8, 8);
+				this.physics.world.enable(this.weapon);
+
+				this.container.add(this.weapon);
+				this.attacking = false;
+
+				// update camera
+				this.updateCamera();
+
+				// don't go out of the map
+				this.container.body.setCollideWorldBounds(true);
+
+				this.physics.add.overlap(this.weapon, this.spawns, this.onMeetEnemy, false, this);
+				this.physics.add.collider(this.container, this.spawns);
+				this.physics.add.collider(this.container, this.obstacles);
+			};
+
+			worldScene.addOtherPlayers = function(playerInfo) {
+				const otherPlayer = this.add.sprite(playerInfo.x, playerInfo.y, 'player', 9);
+				otherPlayer.setTint(Math.random() * 0xffffff);
+				otherPlayer.playerId = playerInfo.playerId;
+				this.otherPlayers.add(otherPlayer);
+			};
+
+			worldScene.updateCamera = function() {
+				// limit camera to map
+				this.cameras.main.setBounds(0, 0, this.map.widthInPixels, this.map.heightInPixels);
+				this.cameras.main.startFollow(this.container);
+				this.cameras.main.roundPixels = true; // avoid tile bleed
+			};
+
+			worldScene.createEnemies = function() {
+				// where the enemies will be
+				this.spawns = this.physics.add.group({
+					classType: Phaser.GameObjects.Sprite
+				});
+				for (var i = 0; i < 20; i++) {
+					const location = this.getValidLocation();
+					// parameters are x, y, width, height
+					var enemy = this.spawns.create(location.x, location.y, this.getEnemySprite());
+					enemy.body.setCollideWorldBounds(true);
+					enemy.body.setImmovable();
+				}
+
+				// move enemies
+				this.timedEvent = this.time.addEvent({
+					delay: 3000,
+					callback: this.moveEnemies,
+					callbackScope: this,
+					loop: true
+				});
+			};
+
+			worldScene.moveEnemies = function() {
+				this.spawns.getChildren().forEach((enemy) => {
+					const randNumber = Math.floor(Math.random() * 4 + 1);
+
+					switch (randNumber) {
+						case 1:
+							enemy.body.setVelocityX(50);
+							break;
+						case 2:
+							enemy.body.setVelocityX(-50);
+							break;
+						case 3:
+							enemy.body.setVelocityY(50);
+							break;
+						case 4:
+							enemy.body.setVelocityY(50);
+							break;
+						default:
+							enemy.body.setVelocityX(50);
+					}
+				});
+
+				setTimeout(() => {
+					this.spawns.setVelocityX(0);
+					this.spawns.setVelocityY(0);
+				}, 500);
+			};
+
+			worldScene.getEnemySpite = function() {
+				var sprites = ['golem', 'ent', 'demon', 'worm', 'wolf'];
+				return sprites[Math.floor(Math.random() * sprites.length)];
+			};
+
+			worldScene.getValidLocation = function() {
+				var validLocation = false;
+				var x, y;
+				while (!validLocation) {
+					x = Phaser.Math.RND.between(0, this.physics.world.bounds.width);
+					y = Phaser.Math.RND.between(0, this.physics.world.bounds.height);
+
+					var occupied = false;
+					this.spawns.getChildren().forEach((child) => {
+						if (child.getBounds().contains(x, y)) {
+							occupied = true;
+						}
+					});
+					if (!occupied) validLocation = true;
+				}
+				return {x, y};
+			};
+
+			worldScene.onMeetEnemy = function(player, enemy) {
+				if (this.attacking) {
+					const location = this.getValidLocation();
+					enemy.x = location.x;
+					enemy.y = location.y;
+				}
 			};
 
 			worldScene.update = function() {
-				let player_moved = false;
-				// this.controls.update(delta);
+				if (this.container) {
+					this.container.body.setVelocity(0);
 
-				this.player.body.setVelocity(0);
+					// Horizontal movement
+					if (this.cursors.left.isDown) {
+						this.container.body.setVelocityX(-80);
+					} else if (this.cursors.right.isDown) {
+						this.container.body.setVelocityX(80);
+					}
 
-				// Horizontal movement
-				if (this.cursors.left.isDown || this.wasd.left.isDown) {
-					this.player.body.setVelocityX(-80);
-				} else if (this.cursors.right.isDown || this.wasd.right.isDown) {
-					this.player.body.setVelocityX(80);
-				}
+					// Vertical movement
+					if (this.cursors.up.isDown) {
+						this.container.body.setVelocityY(-80);
+					} else if (this.cursors.down.isDown) {
+						this.container.body.setVelocityY(80);
+					}
 
-				// Vertical movement
-				if (this.cursors.up.isDown || this.wasd.up.isDown) {
-					this.player.body.setVelocityY(-80);
-				} else if (this.cursors.down.isDown || this.wasd.down.isDown) {
-					this.player.body.setVelocityY(80);
-				}
+					// Update the animation last and give left/right animations precedence over up/down animations
+					if (this.cursors.left.isDown) {
+						this.player.anims.play('left', true);
+						this.player.flipX = true;
 
-				// Update the animation last and give left/right animations precedence over up/down animations
-				if (this.cursors.left.isDown || this.wasd.left.isDown) {
-					this.player.anims.play('left', true);
-					this.player.flipX = true;
+						this.weapon.flipX = true;
+						this.weapon.setX(-10);
+					} else if (this.cursors.right.isDown) {
+						this.player.anims.play('right', true);
+						this.player.flipX = false;
 
-					player_moved = true;
-				} else if (this.cursors.right.isDown || this.wasd.right.isDown) {
-					this.player.anims.play('right', true);
-					this.player.flipX = false;
+						this.weapon.flipX = false;
+						this.weapon.setX(10);
+					} else if (this.cursors.up.isDown) {
+						this.player.anims.play('up', true);
+					} else if (this.cursors.down.isDown) {
+						this.player.anims.play('down', true);
+					} else {
+						this.player.anims.stop();
+					}
 
-					player_moved = true;
-				} else if (this.cursors.up.isDown || this.wasd.up.isDown) {
-					this.player.anims.play('up', true);
+					if (Phaser.Input.Keyboard.JustDown(this.cursors.space) && !this.attacking) {
+						this.attacking = true;
+						setTimeout(() => {
+							this.attacking = false;
+							this.weapon.angle = 0;
+						}, 150);
+					}
 
-					player_moved = true;
-				} else if (this.cursors.down.isDown || this.wasd.down.isDown) {
-					this.player.anims.play('down', true);
+					if (this.attacking) {
+						if (this.weapon.flipX) {
+							this.weapon.angle -= 10;
+						} else {
+							this.weapon.angle += 10;
+						}
+					}
 
-					player_moved = true;
-				} else {
-					this.player.anims.stop();
-				}
+					// emit player movement
+					var x = this.container.x;
+					var y = this.container.y;
+					var flipX = this.player.flipX;
+					if (this.container.oldPosition && (x !== this.container.oldPosition.x || y !== this.container.oldPosition.y || flipX !== this.container.oldPosition.flipX)) {
+						let p = {
+							name: game.socket.id,
+							position: [x, y],
+							flipX: flipX,
+							speed: 0
+						};
 
-				if (player_moved) {
-					game.socket.emit('user move', {
-						name: game.name,
-						position: [this.player.body.position.x, this.player.body.position.y],
-						previous_position: [this.player.body.prev.x, this.player.body.prev.y],
-						speed: this.player.body.speed
-					});
+						game.socket.emit('playerMovement', p);
+					}
+					// save old position data
+					this.container.oldPosition = {
+						x: this.container.x,
+						y: this.container.y,
+						flipX: this.player.flipX
+					};
 				}
 			};
 
@@ -260,21 +437,17 @@ export default {
 				scene: [game.preloadWorld(this, game), game.createWorld(this, game)]
 			};
 
-			new Phaser.Game(config);
-
 			game.dialog = false;
+
+			new Phaser.Game(config);
 		}
 	},
 	mounted() {
 		let game = this;
 
-		game.socket = io('http://localhost:3000', {});
+		game.loading_message = 'Loading World...';
 
-		game.socket.on('connect', function() {
-			game.loading_message = 'Loading World...';
-
-			game.name_form = true;
-		});
+		game.name_form = true;
 	}
 };
 </script>
