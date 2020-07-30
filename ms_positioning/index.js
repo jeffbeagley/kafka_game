@@ -63,6 +63,12 @@ const messageTransform = new Transform({
 		}
 
 		io.emit('playerMoved', p)
+
+		//update internal state of user position
+		players[msg.name].x = msg.position[0]
+		players[msg.name].y = msg.position[1]
+		players[msg.name].flipX = msg.flipX
+
 		callback()
 	}
 })

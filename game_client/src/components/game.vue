@@ -163,6 +163,7 @@ export default {
 							if (players[id].playerId === game.socket.id) {
 								ws.createPlayer(players[id]);
 							} else {
+								console.log("adding other player to world: ",players[id]);
 								ws.addOtherPlayers(players[id]);
 							}
 						});
@@ -303,6 +304,7 @@ export default {
 			};
 
 			worldScene.addOtherPlayers = function(playerInfo) {
+				console.log(playerInfo);
 				const otherPlayer = this.add.sprite(playerInfo.x, playerInfo.y, 'player', playerInfo.avatar);
 				otherPlayer.playerId = playerInfo.playerId;
 				otherPlayer.display_name = playerInfo.display_name;
