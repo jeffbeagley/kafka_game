@@ -53,7 +53,7 @@ class producer extends events {
 		}
 
 		if (this._batch_size == null || this._batch_age == null || (this._buffer && this._buffer.length > this._batch_size)) {
-			console.log("buffer full")
+			console.log("Buffer is dumping")
 			callback()
 		} else {
 			this.setupTimer(callback)

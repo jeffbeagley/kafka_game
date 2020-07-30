@@ -17,6 +17,14 @@ const schm = {
 			type: 'string'
 		},
 		{
+			name: 'avatar',
+			type: 'double'
+		},
+		{
+			name: 'frame',
+			type: 'double'
+		},
+		{
 			name: 'position',
 			type: {
 				type: 'array',
@@ -47,6 +55,8 @@ const messageTransform = new Transform({
 
 		let p = {
 			name: msg.name,
+			avatar: msg.avatar,
+			frame: msg.frame,
 			position: [msg.position[0], msg.position[1]],
 			flipX: msg.flipX,
 			speed: 0
@@ -62,14 +72,16 @@ c.pipe(messageTransform)
 io.on('connection', (socket) => {
 	console.log('a user connected:', socket.id)
 
-	socket.on('userJoin', () => {
+	socket.on('userJoin', (player_info) => {
 		console.log('a user joined')
 
 		players[socket.id] = {
 			flipX: false,
-			x: Math.floor(Math.random() * 400) + 50,
-			y: Math.floor(Math.random() * 500) + 50,
-			playerId: socket.id
+			x: 100,
+			y: 100,
+			playerId: socket.id,
+			avatar: player_info.avatar,
+			display_name: player_info.display_name
 		}
 
 		// send the players object to the new player
@@ -90,6 +102,8 @@ io.on('connection', (socket) => {
 	socket.on('playerMovement', (data) => {
 		let m = {
 			name: data.name,
+			avatar: data.avatar,
+			frame: data.frame,
 			position: data.position,
 			flipX: data.flipX,
 			speed: data.speed

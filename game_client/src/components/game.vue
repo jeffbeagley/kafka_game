@@ -13,17 +13,33 @@
 			<v-dialog v-model="name_form" persistent max-width="600px">
 				<v-card>
 					<v-card-title>
-						<span class="headline">User Profile</span>
+						<span class="headline">Create Character</span>
 					</v-card-title>
 					<v-card-text>
 						<v-container>
 							<v-row>
-								<v-col cols="12" sm="6" md="4">
-									<v-text-field label="Name*" required v-model="name"></v-text-field>
+								<v-col cols="12" sm="12" md="12">
+									<v-text-field label="Character Name*" required v-model="name"></v-text-field>
 								</v-col>
 							</v-row>
+							Select Avatar
+							<v-radio-group v-model="avatar" :mandatory="true">
+								<v-row>
+									<v-col cols="12" sm="6" md="4">
+										<img src="img/RPG_assets.png" alt="Icons" />
+										<v-radio label="Male 1" value="6"></v-radio>
+									</v-col>
+									<v-col cols="12" sm="6" md="4">
+										<img src="img/RPG_assets.png" alt="Icons" />
+										<v-radio label="Female 1" value="9"></v-radio>
+									</v-col>
+									<v-col cols="12" sm="6" md="4">
+										<img src="img/RPG_assets.png" alt="Icons" />
+										<v-radio label="Female 2" value="3" disabled></v-radio>
+									</v-col>
+								</v-row>
+							</v-radio-group>
 						</v-container>
-						<small>*indicates required field</small>
 					</v-card-text>
 					<v-card-actions>
 						<v-spacer></v-spacer>
@@ -41,6 +57,21 @@ import Phaser from 'phaser';
 import mapJSON from '../assets/map/map';
 import io from 'socket.io-client';
 
+const sprite_animations = {
+	6: {
+		left: [1, 7, 1, 13],
+		right: [1, 7, 1, 13],
+		up: [2, 8, 2, 14],
+		down: [0, 6, 0, 12]
+	},
+	9: {
+		left: [4, 10, 4, 16],
+		right: [4, 10, 4, 16],
+		up: [5, 11, 5, 17],
+		down: [3, 9, 3, 15]
+	}
+};
+
 export default {
 	name: 'game',
 	data() {
@@ -49,7 +80,8 @@ export default {
 			socket: null,
 			dialog: true,
 			name_form: false,
-			loading_message: 'Awaiting Server Connection...'
+			loading_message: 'Awaiting Server Connection...',
+			avatar: '6'
 		};
 	},
 	methods: {
@@ -97,11 +129,15 @@ export default {
 				game.socket = io('http://localhost:3000', {});
 
 				game.socket.on('connect', () => {
-					game.socket.emit('userJoin');
+					game.socket.emit('userJoin', {
+						avatar: game.avatar,
+						display_name: game.name
+					});
 
 					let ws = this;
 
 					this.otherPlayers = this.physics.add.group();
+					this.otherPlayersNames = this.physics.add.group();
 
 					// create map
 					this.createMap();
@@ -142,12 +178,26 @@ export default {
 								player.destroy();
 							}
 						});
+
+						ws.otherPlayersNames.getChildren().forEach(function(player) {
+							if (playerId === player.playerId) {
+								player.destroy();
+							}
+						});
+
 					});
 
 					game.socket.on('playerMoved', function(playerInfo) {
 						ws.otherPlayers.getChildren().forEach(function(player) {
 							if (playerInfo.name === player.playerId) {
 								player.flipX = playerInfo.flipX;
+								player.setPosition(playerInfo.position[0], playerInfo.position[1]);
+								player.setFrame(playerInfo.frame);
+							}
+						});
+
+						ws.otherPlayersNames.getChildren().forEach(function(player) {
+							if (playerInfo.name === player.playerId) {
 								player.setPosition(playerInfo.position[0], playerInfo.position[1]);
 							}
 						});
@@ -180,33 +230,34 @@ export default {
 				this.anims.create({
 					key: 'left',
 					frames: this.anims.generateFrameNumbers('player', {
-						frames: [1, 7, 1, 13]
+						frames: sprite_animations[parseInt(game.avatar)].left
 					}),
 					frameRate: 10,
 					repeat: -1
 				});
 
-				// animation with key 'right'
 				this.anims.create({
 					key: 'right',
 					frames: this.anims.generateFrameNumbers('player', {
-						frames: [1, 7, 1, 13]
+						frames: sprite_animations[parseInt(game.avatar)].right
 					}),
 					frameRate: 10,
 					repeat: -1
 				});
+
 				this.anims.create({
 					key: 'up',
 					frames: this.anims.generateFrameNumbers('player', {
-						frames: [2, 8, 2, 14]
+						frames: sprite_animations[parseInt(game.avatar)].up
 					}),
 					frameRate: 10,
 					repeat: -1
 				});
+
 				this.anims.create({
 					key: 'down',
 					frames: this.anims.generateFrameNumbers('player', {
-						frames: [0, 6, 0, 12]
+						frames: sprite_animations[parseInt(game.avatar)].down
 					}),
 					frameRate: 10,
 					repeat: -1
@@ -215,20 +266,28 @@ export default {
 
 			worldScene.createPlayer = function(playerInfo) {
 				// our player sprite created through the physics system
-				this.player = this.add.sprite(0, 0, 'player', 6);
+				this.player = this.add.sprite(0, 0, 'player', parseInt(game.avatar));
 
 				this.container = this.add.container(playerInfo.x, playerInfo.y);
 				this.container.setSize(16, 16);
 				this.physics.world.enable(this.container);
 				this.container.add(this.player);
 
+				// add name
+				var character_name_style = {font: '8px Arial', fill: '#FFF', align: 'center'};
+
+				this.character_name = this.add.text(0, 0, game.name, character_name_style);
+				this.character_name.y = -this.container.height;
+				this.container.add(this.character_name);
+
 				// add weapon
 				this.weapon = this.add.sprite(10, 0, 'sword');
 				this.weapon.setScale(0.5);
 				this.weapon.setSize(8, 8);
+				this.container.add(this.weapon);
 				this.physics.world.enable(this.weapon);
 
-				this.container.add(this.weapon);
+				//this.container.add(this.weapon);
 				this.attacking = false;
 
 				// update camera
@@ -244,10 +303,22 @@ export default {
 			};
 
 			worldScene.addOtherPlayers = function(playerInfo) {
-				const otherPlayer = this.add.sprite(playerInfo.x, playerInfo.y, 'player', 9);
-				otherPlayer.setTint(Math.random() * 0xffffff);
+				const otherPlayer = this.add.sprite(playerInfo.x, playerInfo.y, 'player', playerInfo.avatar);
 				otherPlayer.playerId = playerInfo.playerId;
+				otherPlayer.display_name = playerInfo.display_name;
+
+				// add name
+				let character_name_style = {font: '8px Arial', fill: '#FFF', align: 'center'};
+
+				const character_name = this.add.text(0, 0, playerInfo.display_name, character_name_style);
+				character_name.x = otherPlayer.x;
+				character_name.y = otherPlayer.y;
+
+				character_name.playerId = playerInfo.playerId;
+
 				this.otherPlayers.add(otherPlayer);
+				this.otherPlayersNames.add(character_name);
+
 				otherPlayer.body.setCollideWorldBounds(true);
 				otherPlayer.body.setImmovable();
 			};
@@ -398,10 +469,14 @@ export default {
 					// emit player movement
 					var x = this.container.x;
 					var y = this.container.y;
+					var frame = this.player.frame.name;
+
 					var flipX = this.player.flipX;
 					if (this.container.oldPosition && (x !== this.container.oldPosition.x || y !== this.container.oldPosition.y || flipX !== this.container.oldPosition.flipX)) {
 						let p = {
 							name: game.socket.id,
+							avatar: parseInt(game.avatar),
+							frame: parseInt(frame),
 							position: [x, y],
 							flipX: flipX,
 							speed: 0
@@ -436,7 +511,7 @@ export default {
 						gravity: {
 							y: 0
 						},
-						debug: true // set to true to view zones
+						debug: false // set to true to view zones
 					}
 				},
 				scene: [game.preloadWorld(this, game), game.createWorld(this, game)]
