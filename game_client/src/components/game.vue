@@ -1,5 +1,6 @@
 <template>
 	<v-app id="game_container">
+		Latency: {{ latency }}
 		<div id="game">
 			<v-dialog v-model="dialog" hide-overlay persistent width="300">
 				<v-card color="primary" dark>
@@ -19,23 +20,19 @@
 						<v-container>
 							<v-row>
 								<v-col cols="12" sm="12" md="12">
-									<v-text-field label="Character Name*" required v-model="name"></v-text-field>
+									<v-text-field label="Character Name*" required v-model="player.display_name"></v-text-field>
 								</v-col>
 							</v-row>
 							Select Avatar
-							<v-radio-group v-model="avatar" :mandatory="true">
+							<v-radio-group v-model="player.avatar" :mandatory="true">
 								<v-row>
 									<v-col cols="12" sm="6" md="4">
-										<img src="img/RPG_assets.png" alt="Icons" />
-										<v-radio label="Male 1" value="6"></v-radio>
+										<v-img :src="require('../assets/player_male.png')" class="playerMale"></v-img>
+										<v-radio label="Male" value="6"></v-radio>
 									</v-col>
 									<v-col cols="12" sm="6" md="4">
-										<img src="img/RPG_assets.png" alt="Icons" />
-										<v-radio label="Female 1" value="9"></v-radio>
-									</v-col>
-									<v-col cols="12" sm="6" md="4">
-										<img src="img/RPG_assets.png" alt="Icons" />
-										<v-radio label="Female 2" value="3" disabled></v-radio>
+										<v-img :src="require('../assets/player_female.png')" class="playerFemale"></v-img>
+										<v-radio label="Female" value="9"></v-radio>
 									</v-col>
 								</v-row>
 							</v-radio-group>
@@ -72,16 +69,33 @@ const sprite_animations = {
 	}
 };
 
+const position_event_schema = {
+	session_id: '',
+	client_time: '',
+	avatar: 0,
+	frame: 1,
+	position: [100, 100],
+	flipX: false,
+	speed: 0,
+	server_processed: false
+};
+
 export default {
 	name: 'game',
 	data() {
 		return {
-			name: 'jeff',
+			player: {
+				session_id: '0',
+				display_name: 'Player',
+				avatar: 6,
+				position_events: []
+			},
+			latency: 0,
 			socket: null,
 			dialog: true,
 			name_form: false,
 			loading_message: 'Awaiting Server Connection...',
-			avatar: '6'
+			logged_in: false
 		};
 	},
 	methods: {
@@ -126,83 +140,109 @@ export default {
 			let worldScene = new Phaser.Scene('worldScene');
 
 			worldScene.create = function() {
-				game.socket = io('http://localhost:3000', {});
+				let ws = this;
 
-				game.socket.on('connect', () => {
-					game.socket.emit('userJoin', {
-						avatar: game.avatar,
-						display_name: game.name
+				game.logged_in = true;
+				this.otherPlayers = this.physics.add.group();
+				this.otherPlayersNames = this.physics.add.group();
+
+				// create map
+				this.createMap();
+
+				// create player animations
+				this.createAnimations();
+
+				// user input
+				this.cursors = this.input.keyboard.createCursorKeys();
+				this.wasd = {
+					up: this.input.keyboard.addKey('W'),
+					down: this.input.keyboard.addKey('S'),
+					left: this.input.keyboard.addKey('A'),
+					right: this.input.keyboard.addKey('D')
+				};
+
+				// create enemies
+				//this.createEnemies();
+
+				let p1 = ws.createPlayer(game.player.session_id);
+
+				// listen for web socket events
+				game.socket.on('currentPlayers', function(players) {
+					Object.keys(players).forEach(function(id) {
+						if (players[id].session_id != game.player.session_id) {
+							console.log('adding other player to world: ', players[id]);
+							ws.addOtherPlayers(players[id]);
+						}
 					});
 
-					let ws = this;
+					//run a resync of all other players
+				});
 
-					this.otherPlayers = this.physics.add.group();
-					this.otherPlayersNames = this.physics.add.group();
+				game.socket.on('newPlayer', function(playerInfo) {
+					ws.addOtherPlayers(playerInfo);
+				});
 
-					// create map
-					this.createMap();
+				game.socket.on('disconnect', function(player_session_id) {
+					ws.otherPlayers.getChildren().forEach(function(player) {
+						if (player_session_id === player.session_id) {
+							player.destroy();
+						}
+					});
 
-					// create player animations
-					this.createAnimations();
+					ws.otherPlayersNames.getChildren().forEach(function(player) {
+						if (player_session_id === player.session_id) {
+							player.destroy();
+						}
+					});
+				});
 
-					// user input
-					this.cursors = this.input.keyboard.createCursorKeys();
-					this.wasd = {
-						up: this.input.keyboard.addKey('W'),
-						down: this.input.keyboard.addKey('S'),
-						left: this.input.keyboard.addKey('A'),
-						right: this.input.keyboard.addKey('D')
-					};
+				game.socket.on('playerMoved', function(player_movement_event) {
+					//determine latency for player
+					let d = new Date();
 
-					// create enemies
-					//this.createEnemies();
+					let latency = d.getTime() - player_movement_event.client_time;
 
-					// listen for web socket events
-					game.socket.on('currentPlayers', function(players) {
-						Object.keys(players).forEach(function(id) {
-							if (players[id].playerId === game.socket.id) {
-								ws.createPlayer(players[id]);
-							} else {
-								console.log("adding other player to world: ",players[id]);
-								ws.addOtherPlayers(players[id]);
+					game.latency = latency;
+
+					//now that player moved event has come back from server, lets use this new event to sync local player state
+
+					//only iterate when player that was moved is THIS player
+					if (player_movement_event.session_id === game.player.session_id) {
+						game.player.position_events.forEach((position_event, index, object) => {
+							if (position_event.server_processed === false) {
+								if (position_event.client_time === player_movement_event.client_time) {
+									//server has processed this event, so we can get rid of it from local state
+									if (player_movement_event.server_processed) {
+										object.splice(index, 1);
+
+										//Determine if player is not at this position
+										let x = p1.x;
+										let y = p1.y;
+
+										if (x !== player_movement_event.position[0] || y !== player_movement_event.position[1]) {
+											//p1.setPosition(player_movement_event.position[0], player_movement_event.position[1]);
+										}
+									}
+								}
 							}
 						});
-					});
-
-					game.socket.on('newPlayer', function(playerInfo) {
-						ws.addOtherPlayers(playerInfo);
-					});
-
-					game.socket.on('disconnect', function(playerId) {
+					} else {
+						//move other players
 						ws.otherPlayers.getChildren().forEach(function(player) {
-							if (playerId === player.playerId) {
-								player.destroy();
+							if (player_movement_event.session_id === player.session_id) {
+								player.flipX = player_movement_event.flipX;
+								player.setPosition(player_movement_event.position[0], player_movement_event.position[1]);
+								player.setFrame(player_movement_event.frame);
 							}
 						});
 
-						ws.otherPlayersNames.getChildren().forEach(function(player) {
-							if (playerId === player.playerId) {
-								player.destroy();
+						//move other players names
+						ws.otherPlayersNames.getChildren().forEach(function(character_name) {
+							if (player_movement_event.session_id === character_name.session_id) {
+								character_name.setPosition(player_movement_event.position[0], player_movement_event.position[1]);
 							}
 						});
-
-					});
-
-					game.socket.on('playerMoved', function(playerInfo) {
-						ws.otherPlayers.getChildren().forEach(function(player) {
-							if (playerInfo.name === player.playerId) {
-								player.flipX = playerInfo.flipX;
-								player.setPosition(playerInfo.position[0], playerInfo.position[1]);
-								player.setFrame(playerInfo.frame);
-							}
-						});
-
-						ws.otherPlayersNames.getChildren().forEach(function(player) {
-							if (playerInfo.name === player.playerId) {
-								player.setPosition(playerInfo.position[0], playerInfo.position[1]);
-							}
-						});
-					});
+					}
 				});
 			};
 
@@ -231,7 +271,7 @@ export default {
 				this.anims.create({
 					key: 'left',
 					frames: this.anims.generateFrameNumbers('player', {
-						frames: sprite_animations[parseInt(game.avatar)].left
+						frames: sprite_animations[parseInt(game.player.avatar)].left
 					}),
 					frameRate: 10,
 					repeat: -1
@@ -240,7 +280,7 @@ export default {
 				this.anims.create({
 					key: 'right',
 					frames: this.anims.generateFrameNumbers('player', {
-						frames: sprite_animations[parseInt(game.avatar)].right
+						frames: sprite_animations[parseInt(game.player.avatar)].right
 					}),
 					frameRate: 10,
 					repeat: -1
@@ -249,7 +289,7 @@ export default {
 				this.anims.create({
 					key: 'up',
 					frames: this.anims.generateFrameNumbers('player', {
-						frames: sprite_animations[parseInt(game.avatar)].up
+						frames: sprite_animations[parseInt(game.player.avatar)].up
 					}),
 					frameRate: 10,
 					repeat: -1
@@ -258,18 +298,18 @@ export default {
 				this.anims.create({
 					key: 'down',
 					frames: this.anims.generateFrameNumbers('player', {
-						frames: sprite_animations[parseInt(game.avatar)].down
+						frames: sprite_animations[parseInt(game.player.avatar)].down
 					}),
 					frameRate: 10,
 					repeat: -1
 				});
 			};
 
-			worldScene.createPlayer = function(playerInfo) {
+			worldScene.createPlayer = function() {
 				// our player sprite created through the physics system
-				this.player = this.add.sprite(0, 0, 'player', parseInt(game.avatar));
+				this.player = this.add.sprite(0, 0, 'player', parseInt(game.player.avatar));
 
-				this.container = this.add.container(playerInfo.x, playerInfo.y);
+				this.container = this.add.container(100, 100);
 				this.container.setSize(16, 16);
 				this.physics.world.enable(this.container);
 				this.container.add(this.player);
@@ -277,7 +317,7 @@ export default {
 				// add name
 				var character_name_style = {font: '8px Arial', fill: '#FFF', align: 'center'};
 
-				this.character_name = this.add.text(0, 0, game.name, character_name_style);
+				this.character_name = this.add.text(0, 0, game.player.display_name, character_name_style);
 				this.character_name.y = -this.container.height;
 				this.container.add(this.character_name);
 
@@ -301,12 +341,29 @@ export default {
 				this.physics.add.collider(this.container, this.spawns);
 				this.physics.add.collider(this.container, this.obstacles);
 				this.physics.add.collider(this.container, this.otherPlayers);
+
+				//setup very first position event for new player
+				let d = new Date();
+				let new_player_position = {...position_event_schema};
+
+				new_player_position.session_id = game.player.session_id;
+				new_player_position.client_time = d.getTime();
+				new_player_position.frame = this.player.frame.name;
+				new_player_position.position = [100, 100];
+				new_player_position.flipX = this.player.flipX;
+				new_player_position.speed = 0;
+
+				game.player.position_events.push(new_player_position);
+				game.socket.emit('userJoin', game.player);
+
+				return this.player;
 			};
 
 			worldScene.addOtherPlayers = function(playerInfo) {
-				console.log(playerInfo);
-				const otherPlayer = this.add.sprite(playerInfo.x, playerInfo.y, 'player', playerInfo.avatar);
-				otherPlayer.playerId = playerInfo.playerId;
+				let last_position_event = playerInfo.position_events[playerInfo.position_events.length - 1];
+				console.log(`${playerInfo.display_name} is at ${last_position_event.position[0]} ${last_position_event.position[1]}`);
+				const otherPlayer = this.add.sprite(last_position_event.position[0], last_position_event.position[1], 'player', playerInfo.avatar);
+				otherPlayer.session_id = playerInfo.session_id;
 				otherPlayer.display_name = playerInfo.display_name;
 
 				// add name
@@ -316,7 +373,7 @@ export default {
 				character_name.x = otherPlayer.x;
 				character_name.y = otherPlayer.y;
 
-				character_name.playerId = playerInfo.playerId;
+				character_name.session_id = playerInfo.session_id;
 
 				this.otherPlayers.add(otherPlayer);
 				this.otherPlayersNames.add(character_name);
@@ -475,16 +532,19 @@ export default {
 
 					var flipX = this.player.flipX;
 					if (this.container.oldPosition && (x !== this.container.oldPosition.x || y !== this.container.oldPosition.y || flipX !== this.container.oldPosition.flipX)) {
-						let p = {
-							name: game.socket.id,
-							avatar: parseInt(game.avatar),
-							frame: parseInt(frame),
-							position: [x, y],
-							flipX: flipX,
-							speed: 0
-						};
+						let d = new Date();
+						let player_movement_event = {...position_event_schema};
 
-						game.socket.emit('playerMovement', p);
+						player_movement_event.session_id = game.player.session_id;
+						player_movement_event.client_time = d.getTime();
+						player_movement_event.frame = parseInt(frame);
+						player_movement_event.position = [x, y];
+						player_movement_event.flipX = flipX;
+						player_movement_event.speed = 0;
+
+						game.player.position_events.push(player_movement_event);
+
+						game.socket.emit('playerMovement', player_movement_event);
 					}
 					// save old position data
 					this.container.oldPosition = {
@@ -529,7 +589,26 @@ export default {
 
 		game.loading_message = 'Loading World...';
 
-		game.name_form = true;
+		game.socket = io('http://localhost:3000', {});
+
+		game.socket.on('connect_error', () => {
+			game.dialog = true;
+			game.name_form = false;
+
+			game.loading_message = `We're having issues connecting to the game server... Trying again `;
+		});
+
+		game.socket.on('connect', () => {
+			game.dialog = false;
+
+			game.player.session_id = game.socket.id;
+
+			if (!this.logged_in) {
+				game.name_form = true;
+			} else {
+				game.socket.emit('userJoin', game.player);
+			}
+		});
 	}
 };
 </script>
